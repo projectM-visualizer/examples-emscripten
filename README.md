@@ -1,4 +1,5 @@
-# projectM for emscripten
+projectM Emscripten Example
+===========================
 
 This application is a sample entry point for the emscripten-built version of projectM.
 
