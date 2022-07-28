@@ -4,14 +4,15 @@
  *
  */
 
-#include <math.h>
-#include <projectM.h>
-#include <sdltoprojectM.h>
+#include <libprojectM/projectM.h>
 
 #include <emscripten.h>
+
 #include <GL/gl.h>
+
 #include <SDL.h>
 
+#include <cmath>
 #include <string>
 
 const int FPS = 60;
@@ -36,11 +37,11 @@ void audioInputCallbackF32(void* userdata, unsigned char* stream, int len)
 {
     if (app.audioChannelsCount == 1)
     {
-        projectm_pcm_add_float_1ch_data(app.pm, reinterpret_cast<float*>(stream), len / sizeof(float));
+        projectm_pcm_add_float(app.pm, reinterpret_cast<float*>(stream), len / sizeof(float), PROJECTM_MONO);
     }
     else if (app.audioChannelsCount == 2)
     {
-        projectm_pcm_add_float_2ch_data(app.pm, reinterpret_cast<float*>(stream), len / sizeof(float));
+        projectm_pcm_add_float(app.pm, reinterpret_cast<float*>(stream), len / sizeof(float), PROJECTM_STEREO);
     }
 }
 
@@ -168,10 +169,12 @@ void keyHandler(const SDL_Event& sdl_evt)
     }
 
     // translate into projectM codes and perform default projectM handler
+    /*
     evt = sdl2pmEvent(&sdl_evt);
     mod = sdl2pmModifier(sdl_mod);
     key = sdl2pmKeycode(sdl_keycode, sdl_mod);
     projectm_key_handler(app.pm, evt, key, mod);
+     */
 }
 
 void presetSwitchedEvent(bool isHardCut, unsigned int index, void* context)
@@ -203,7 +206,7 @@ void generateRandomAudioData()
         }
     }
 
-    projectm_pcm_add_16bit_2ch_512(app.pm, pcm_data);
+    projectm_pcm_add_int16(app.pm, &pcm_data[0][0], 512, PROJECTM_STEREO);
 }
 
 void renderFrame()
