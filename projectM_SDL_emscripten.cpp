@@ -4,7 +4,8 @@
  *
  */
 
-#include <libprojectM/projectM.h>
+#include <projectM-4/projectM.h>
+#include <projectM-4/playlist.h>
 
 #include <emscripten.h>
 
@@ -19,11 +20,10 @@ const int FPS = 60;
 
 struct projectMApp
 {
-    projectm_handle pm{ nullptr };
+    projectm_handle projectM{ nullptr };
+    projectm_playlist_handle playlist{ nullptr };
     SDL_Window* win{ nullptr };
-    SDL_Renderer* rend{ nullptr };
-    bool done{ false };
-    projectm_settings settings;
+    SDL_Renderer* renderer{ nullptr };
     SDL_AudioDeviceID audioInputDevice{ 0 };
     int audioInputDevicesCount{ 0 };
     int audioInputDeviceIndex{ 0 };
@@ -31,17 +31,17 @@ struct projectMApp
     bool isFullscreen{ false };
 };
 
-projectMApp app;
+static projectMApp app;
 
 void audioInputCallbackF32(void* userdata, unsigned char* stream, int len)
 {
     if (app.audioChannelsCount == 1)
     {
-        projectm_pcm_add_float(app.pm, reinterpret_cast<float*>(stream), len / sizeof(float), PROJECTM_MONO);
+        projectm_pcm_add_float(app.projectM, reinterpret_cast<float*>(stream), len / sizeof(float), PROJECTM_MONO);
     }
     else if (app.audioChannelsCount == 2)
     {
-        projectm_pcm_add_float(app.pm, reinterpret_cast<float*>(stream), len / sizeof(float), PROJECTM_STEREO);
+        projectm_pcm_add_float(app.projectM, reinterpret_cast<float*>(stream), len / sizeof(float), PROJECTM_STEREO);
     }
 }
 
@@ -96,7 +96,6 @@ bool selectAudioInput(projectMApp* application, int audioDeviceIndex)
         SDL_PauseAudioDevice(app.audioInputDevice, false);
 
         printf("Audio device specs: Channels=%d, Samplerate=%d, Format=%d\n", have.channels, have.freq, have.format);
-        projectm_set_toast_message(app.pm, audioDeviceName.c_str());
     }
     else
     {
@@ -106,11 +105,8 @@ bool selectAudioInput(projectMApp* application, int audioDeviceIndex)
     return true;
 }
 
-void keyHandler(const SDL_Event& sdl_evt)
+void keyHandler(projectMApp* appContext, const SDL_Event& sdl_evt)
 {
-    projectMEvent evt;
-    projectMKeycode key;
-    projectMModifier mod;
     auto sdl_mod = static_cast<SDL_Keymod>(sdl_evt.key.keysym.mod);
     SDL_Keycode sdl_keycode = sdl_evt.key.keysym.sym;
     bool keyMod = false;
@@ -124,29 +120,40 @@ void keyHandler(const SDL_Event& sdl_evt)
     // handle keyboard input (for our app first, then projectM)
     switch (sdl_keycode)
     {
+        case SDLK_r:
+        {
+            bool shuffleMode = projectm_playlist_get_shuffle(appContext->playlist);
+            projectm_playlist_set_shuffle(appContext->playlist, true);
+            projectm_playlist_play_next(appContext->playlist, true);
+            projectm_playlist_set_shuffle(appContext->playlist, shuffleMode);
+            break;
+        }
+
+        case SDLK_n:
+            projectm_playlist_play_next(appContext->playlist, true);
+            break;
+
+        case SDLK_p:
+            projectm_playlist_play_previous(appContext->playlist, true);
+            break;
+
         case SDLK_BACKSPACE:
-            projectm_delete_search_text(app.pm);
+            projectm_playlist_play_last(appContext->playlist, true);
             break;
 
-        case SDLK_RETURN:
-            if (!projectm_is_text_input_active(app.pm, false))
-            {
-                SDL_StartTextInput();
-            }
+        case SDLK_UP:
+            projectm_set_beat_sensitivity(appContext->projectM, projectm_get_beat_sensitivity(appContext->projectM) + 0.1f);
             break;
 
-        case SDLK_ESCAPE:
-            if (projectm_is_text_input_active(app.pm, false))
-            {
-                SDL_StopTextInput();
-            }
+        case SDLK_DOWN:
+            projectm_set_beat_sensitivity(appContext->projectM, projectm_get_beat_sensitivity(appContext->projectM) - 0.1f);
             break;
 
         case SDLK_f:
             if (keyMod)
             {
-                app.isFullscreen = !app.isFullscreen;
-                SDL_SetWindowFullscreen(app.win, app.isFullscreen ? SDL_WINDOW_FULLSCREEN : 0);
+                appContext->isFullscreen = !appContext->isFullscreen;
+                SDL_SetWindowFullscreen(appContext->win, appContext->isFullscreen ? SDL_WINDOW_FULLSCREEN : 0);
                 return; // handled
             }
             break;
@@ -154,36 +161,27 @@ void keyHandler(const SDL_Event& sdl_evt)
         case SDLK_i:
             if (keyMod)
             {
-                selectAudioInput(&app, app.audioInputDeviceIndex + 1);
+                selectAudioInput(appContext, appContext->audioInputDeviceIndex + 1);
                 return; // handled
             }
             break;
-
-        case SDLK_SPACE:
-            if (!projectm_is_text_input_active(app.pm, true))
-            {
-                projectm_lock_preset(app.pm, !projectm_is_preset_locked(app.pm));
-            }
-            break;
-
     }
 
-    // translate into projectM codes and perform default projectM handler
-    /*
-    evt = sdl2pmEvent(&sdl_evt);
-    mod = sdl2pmModifier(sdl_mod);
-    key = sdl2pmKeycode(sdl_keycode, sdl_mod);
-    projectm_key_handler(app.pm, evt, key, mod);
-     */
+}
+
+void presetSwitchFailedEvent(const char* preset_filename,
+                             const char* message, void* user_data)
+{
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Loading preset %s failed: %s.\n", preset_filename, message);
 }
 
 void presetSwitchedEvent(bool isHardCut, unsigned int index, void* context)
 {
-    auto presetName = projectm_get_preset_name(app.pm, index);
+    auto presetName = projectm_playlist_item(app.playlist, index);
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Displaying preset: %s\n", presetName);
 
     std::string newTitle = "projectM ➫ " + std::string(presetName);
-    projectm_free_string(presetName);
+    projectm_playlist_free_string(presetName);
 
     SDL_SetWindowTitle(app.win, newTitle.c_str());
 }
@@ -206,34 +204,28 @@ void generateRandomAudioData()
         }
     }
 
-    projectm_pcm_add_int16(app.pm, &pcm_data[0][0], 512, PROJECTM_STEREO);
+    projectm_pcm_add_int16(app.projectM, &pcm_data[0][0], 512, PROJECTM_STEREO);
 }
 
-void renderFrame()
+void renderFrame(void* appArg)
 {
     SDL_Event evt;
+
+    auto* appContext = reinterpret_cast<projectMApp*>(appArg);
 
     SDL_PollEvent(&evt);
     switch (evt.type)
     {
         case SDL_KEYDOWN:
-            keyHandler(evt);
-            break;
-
-        case SDL_TEXTINPUT:
-            if (projectm_is_text_input_active(app.pm, true))
-            {
-                projectm_set_search_text(app.pm, evt.text.text);
-                projectm_populate_preset_menu(app.pm);
-            }
+            keyHandler(appContext, evt);
             break;
 
         case SDL_QUIT:
-            app.done = true;
+            emscripten_cancel_main_loop();
             break;
     }
 
-    if (app.audioChannelsCount > 2 || app.audioChannelsCount < 1)
+    if (appContext->audioChannelsCount > 2 || appContext->audioChannelsCount < 1)
     {
         generateRandomAudioData();
     }
@@ -241,10 +233,10 @@ void renderFrame()
     glClearColor(0.0, 0.5, 0.0, 0.0);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    projectm_render_frame(app.pm);
+    projectm_opengl_render_frame(appContext->projectM);
     glFlush();
 
-    SDL_RenderPresent(app.rend);
+    SDL_RenderPresent(appContext->renderer);
 }
 
 int main(int argc, char* argv[])
@@ -254,35 +246,46 @@ int main(int argc, char* argv[])
 
     SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO);
 
-    app.win = SDL_CreateWindow("projectM", 50, 50, width, height, 0);
-    app.rend = SDL_CreateRenderer(app.win, 0, SDL_RENDERER_ACCELERATED);
-    if (!app.rend)
+    SDL_CreateWindowAndRenderer(width, height, SDL_WINDOW_OPENGL, &app.win, &app.renderer);
+    if (!app.win || !app.renderer)
     {
-        fprintf(stderr, "Failed to create renderer: %s\n", SDL_GetError());
+        fprintf(stderr, "Failed to create SDL renderer: %s\n", SDL_GetError());
         return 1;
     }
 
-    app.settings.mesh_x = 48;
-    app.settings.mesh_y = 48;
-    app.settings.fps = FPS;
-    app.settings.texture_size = 1024;
-    app.settings.window_width = width;
-    app.settings.window_height = height;
-    app.settings.soft_cut_duration = 3; // seconds
-    app.settings.preset_duration = 30; //seconds
-    app.settings.beat_sensitivity = 0.9;
-    app.settings.aspect_correction = true;
-    app.settings.easter_egg = 0; // ???
-    app.settings.shuffle_enabled = true;
-    app.settings.soft_cut_ratings_enabled = true; // ???
-    app.settings.preset_url = projectm_alloc_string(8);
-    strncpy(app.settings.preset_url, "/presets", 8);
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "SDL renderer initialized.\n");
 
-    // init projectM
-    app.pm = projectm_create_settings(&(app.settings), PROJECTM_FLAG_NONE);
-    projectm_select_random_preset(app.pm, true);
-    projectm_set_window_size(app.pm, width, height);
-    projectm_set_preset_switched_event_callback(app.pm, &presetSwitchedEvent, nullptr);
+    app.projectM = projectm_create();
+    if (!app.projectM) {
+        fprintf(stderr, "Failed to create projectM instance!\n");
+        return 1;
+    }
+
+    app.playlist = projectm_playlist_create(app.projectM);
+    if (!app.playlist)
+    {
+        fprintf(stderr, "Failed to create the playlist instance!\n");
+        return 1;
+    }
+
+    projectm_playlist_set_preset_switched_event_callback(app.playlist, &presetSwitchedEvent, nullptr);
+
+    projectm_set_mesh_size(app.projectM, 48, 32);
+    projectm_set_fps(app.projectM, FPS);
+    projectm_set_window_size(app.projectM, width, height);
+    projectm_set_soft_cut_duration(app.projectM, 3.0);
+    projectm_set_preset_duration(app.projectM, 5);
+    projectm_set_beat_sensitivity(app.projectM, 1.0);
+    projectm_set_aspect_correction(app.projectM, true);
+    projectm_set_easter_egg(app.projectM, 0);
+
+    projectm_set_preset_switch_failed_event_callback(app.projectM, &presetSwitchFailedEvent, nullptr);
+
+    projectm_playlist_set_shuffle(app.playlist, true);
+    projectm_playlist_add_path(app.playlist, "/presets", true, true);
+
+    projectm_playlist_play_next(app.playlist, true);
+
     printf("projectM initialized.\n");
 
     // get an audio input device
@@ -292,7 +295,7 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    emscripten_set_main_loop(renderFrame, 0, 0);
+    emscripten_set_main_loop_arg(renderFrame, &app, 0, 1);
 
     return 0;
 }

@@ -4,7 +4,7 @@ project(projectM_Emscripten)
 
 message(STATUS "${CMAKE_PREFIX_PATH}")
 
-find_package(libprojectM REQUIRED CONFIG)
+find_package(projectM4 REQUIRED CONFIG COMPONENTS Playlist)
 
 # Setting the suffix to .html also creates an HTML file in addition to the .js and .wasm outputs.
 set(CMAKE_EXECUTABLE_SUFFIX ".html")
@@ -15,7 +15,7 @@ add_executable(projectM_SDL_emscripten
 
 target_link_libraries(projectM_SDL_emscripten
         PRIVATE
-        libprojectM::static
+        libprojectM::playlist
         )
 
 target_compile_options(projectM_SDL_emscripten
